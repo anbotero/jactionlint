@@ -104,10 +104,7 @@ func runnerContext(in *Inputs) map[string]any {
 	if os_ == "" {
 		os_ = runtime.GOOS
 	}
-	arch := map[string]string{"amd64": "X64", "arm64": "ARM64", "386": "X86", "arm": "ARM"}[runtime.GOARCH]
-	if arch == "" {
-		arch = strings.ToUpper(runtime.GOARCH)
-	}
+	arch := runnerArch(runtime.GOARCH)
 	return map[string]any{
 		"os":          os_,
 		"arch":        arch,
@@ -249,4 +246,12 @@ func (in *Inputs) applyDispatch(w *jactionlint.Workflow) {
 		}
 	}
 	in.Inputs = out
+}
+
+// runnerArch is runner.arch for a Go or OCI architecture: X64, ARM64.
+func runnerArch(goarch string) string {
+	if a := map[string]string{"amd64": "X64", "arm64": "ARM64", "386": "X86", "arm": "ARM"}[goarch]; a != "" {
+		return a
+	}
+	return strings.ToUpper(goarch)
 }

@@ -126,6 +126,15 @@ func (c *ctrEngine) pull(ctx context.Context, image, platform string, say func(s
 	return err
 }
 
+// imagePlatform returns the os/arch of a local image, such as linux/arm64, or "" when the engine does not say.
+func (c *ctrEngine) imagePlatform(ctx context.Context, image string) string {
+	out, err := c.output(ctx, "image", "inspect", "--format", "{{.Os}}/{{.Architecture}}", image)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
+}
+
 // imageEnv returns the environment of the image (PATH and the like).
 func (c *ctrEngine) imageEnv(ctx context.Context, image string) []string {
 	out, err := c.output(ctx, "image", "inspect", "--format", "{{json .Config.Env}}", image)

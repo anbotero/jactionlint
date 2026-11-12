@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,6 +24,7 @@ type jobContainer struct {
 	name     string
 	network  string
 	image    string
+	platform string // os/arch of the job container, such as linux/arm64
 	imageEnv []string
 	services []*serviceContainer
 	root     bool // --container: a root userland with a sudo that runs the command
@@ -64,6 +66,18 @@ func (jr *jobRun) startContainer(ctx context.Context, image string, spec *jactio
 			return nil, err
 		}
 		jc.imageEnv = eng.imageEnv(ctx, image)
+		jc.platform = cfg.Platform
+		if jc.platform == "" {
+			jc.platform = eng.imagePlatform(ctx, image)
+		}
+		if jc.platform == "" {
+			jc.platform = "linux/" + runtime.GOARCH // the engine runs a VM of this machine's architecture
+		}
+		// The job sees the runner of its container: binaries in the tool cache of this machine cannot run there, and
+		// what setup-* actions install in the container must not reach the jobs on this machine.
+		if err := jr.useContainerRunner(jc.platform); err != nil {
+			return nil, err
+		}
 	}
 	if _, err := eng.output(ctx, "network", "create", "--label", "jactionlint=1", jc.network); err != nil {
 		return nil, err
@@ -349,3 +363,30 @@ func (jc *jobContainer) execPolicy(pol *sandbox.Policy, dir string) (*sandbox.Po
 }
 
 var _ = eval.ToString
+
+// useContainerRunner makes the job a runner of the platform of its container (linux/arm64): the tool cache of that
+// platform (mounted, RUNNER_TOOL_CACHE, the Node.js of JavaScript actions) and its os and arch in the runner context.
+func (jr *jobRun) useContainerRunner(platform string) error {
+	parts := strings.Split(platform, "/")
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		return fmt.Errorf("cannot tell the platform of the container from %q", platform)
+	}
+	tools := filepath.Join(filepath.Dir(jr.rd.ToolCache), parts[0]+"-"+parts[1])
+	if err := os.MkdirAll(tools, 0o755); err != nil {
+		return err
+	}
+	jr.rd.ToolCache = tools
+	runner := map[string]any{}
+	if r, ok := jr.env.Contexts["runner"].(map[string]any); ok {
+		for k, v := range r {
+			runner[k] = v
+		}
+	}
+	runner["os"] = parts[0]
+	if parts[0] == "linux" {
+		runner["os"] = "Linux"
+	}
+	runner["arch"] = runnerArch(parts[1])
+	jr.env.Contexts["runner"] = runner
+	return nil
+}

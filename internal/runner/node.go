@@ -26,13 +26,35 @@ var nodeDist = "https://nodejs.org/dist"
 // nodeProvider finds or installs the Node.js that a JavaScript action needs.
 type nodeProvider struct {
 	mu    sync.Mutex
-	tools string // the tool cache of the run
-	found map[int]string
+	found map[string]string // tool cache and major version -> node binary
 }
 
-func newNodeProvider(toolCache string) *nodeProvider {
-	return &nodeProvider{tools: toolCache, found: map[int]string{}}
+func newNodeProvider() *nodeProvider {
+	return &nodeProvider{found: map[string]string{}}
 }
+
+// nodePlatform is a platform as nodejs.org names its builds: linux/x64, darwin/arm64.
+type nodePlatform struct{ os, arch string }
+
+// nodePlatformOf maps a Go or OCI platform (linux/amd64, linux/arm64, linux/arm/v7) to the names of nodejs.org.
+func nodePlatformOf(platform string) nodePlatform {
+	parts := strings.Split(platform, "/")
+	p := nodePlatform{os: parts[0]}
+	if len(parts) > 1 {
+		p.arch = parts[1]
+	}
+	switch p.arch {
+	case "amd64":
+		p.arch = "x64"
+	case "386":
+		p.arch = "x86"
+	case "arm":
+		p.arch = "armv7l"
+	}
+	return p
+}
+
+func hostNodePlatform() nodePlatform { return nodePlatformOf(runtime.GOOS + "/" + runtime.GOARCH) }
 
 // majorOf maps `runs.using` to a Node.js major version: node20 is 20.
 func majorOf(using string) (int, bool) {
@@ -52,12 +74,14 @@ func nodeVersionOf(bin string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// ensure returns the path of a node binary of the major version: the one on PATH when it matches, otherwise one
-// downloaded into the tool cache (and checked against the SHASUMS256.txt of that release).
-func (n *nodeProvider) ensure(ctx context.Context, major int, pathDirs []string, say func(string)) (string, error) {
+// ensure returns the path of a node binary of the major version for the platform: the one on PATH when it matches,
+// otherwise one downloaded into tools, the tool cache of that platform (and checked against the SHASUMS256.txt of that
+// release). A host job and a container job have different tool caches, so they never share a binary.
+func (n *nodeProvider) ensure(ctx context.Context, tools string, platform nodePlatform, major int, pathDirs []string, say func(string)) (string, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	if p := n.found[major]; p != "" {
+	key := tools + "\x00" + strconv.Itoa(major)
+	if p := n.found[key]; p != "" {
 		return p, nil
 	}
 	for _, d := range pathDirs {
@@ -66,17 +90,16 @@ func (n *nodeProvider) ensure(ctx context.Context, major int, pathDirs []string,
 			continue
 		}
 		if v, err := nodeVersionOf(bin); err == nil && strings.HasPrefix(v, "v"+strconv.Itoa(major)+".") {
-			n.found[major] = bin
+			n.found[key] = bin
 			return bin, nil
 		}
 		break // the first node on PATH is the one that a step would find
 	}
 	// the tool cache layout of setup-node: node/<version>/<arch>
-	arch := nodeArch()
-	if matches, _ := filepath.Glob(filepath.Join(n.tools, "node", strconv.Itoa(major)+".*", arch, "bin", "node")); len(matches) > 0 {
+	if matches, _ := filepath.Glob(filepath.Join(tools, "node", strconv.Itoa(major)+".*", platform.arch, "bin", "node")); len(matches) > 0 {
 		bin := matches[len(matches)-1]
 		if _, err := os.Stat(filepath.Join(filepath.Dir(filepath.Dir(bin)), ".jactionlint-complete")); err == nil {
-			n.found[major] = bin
+			n.found[key] = bin
 			return bin, nil
 		}
 	}
@@ -85,32 +108,12 @@ func (n *nodeProvider) ensure(ctx context.Context, major int, pathDirs []string,
 	if err != nil {
 		return "", err
 	}
-	bin, err := installNode(ctx, n.tools, ver, arch)
+	bin, err := installNode(ctx, tools, ver, platform)
 	if err != nil {
 		return "", err
 	}
-	n.found[major] = bin
+	n.found[key] = bin
 	return bin, nil
-}
-
-func nodeArch() string {
-	switch runtime.GOARCH {
-	case "amd64":
-		return "x64"
-	case "386":
-		return "x86"
-	}
-	return runtime.GOARCH
-}
-
-func nodeOS() string {
-	switch runtime.GOOS {
-	case "darwin":
-		return "darwin"
-	case "linux":
-		return "linux"
-	}
-	return runtime.GOOS
 }
 
 // latestNode returns the newest release (such as "20.18.1") of the major version.
@@ -144,8 +147,8 @@ func latestNode(ctx context.Context, major int) (string, error) {
 
 // installNode downloads node-v<ver>-<os>-<arch>.tar.gz, verifies its SHA-256 against SHASUMS256.txt of the release, and
 // unpacks it to <tools>/node/<ver>/<arch>.
-func installNode(ctx context.Context, tools, ver, arch string) (string, error) {
-	file := fmt.Sprintf("node-v%s-%s-%s.tar.gz", ver, nodeOS(), arch)
+func installNode(ctx context.Context, tools, ver string, platform nodePlatform) (string, error) {
+	file := fmt.Sprintf("node-v%s-%s-%s.tar.gz", ver, platform.os, platform.arch)
 	sums, err := httpGet(ctx, fmt.Sprintf("%s/v%s/SHASUMS256.txt", nodeDist, ver), 1<<20)
 	if err != nil {
 		return "", fmt.Errorf("cannot read the checksums of Node.js %s: %w", ver, err)
@@ -160,7 +163,7 @@ func installNode(ctx context.Context, tools, ver, arch string) (string, error) {
 	if want == "" {
 		return "", fmt.Errorf("node.js %s has no build %s", ver, file)
 	}
-	dest := filepath.Join(tools, "node", ver, arch)
+	dest := filepath.Join(tools, "node", ver, platform.arch)
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return "", err
 	}

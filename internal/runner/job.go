@@ -696,6 +696,14 @@ func (jr *jobRun) parentEnv() []string {
 	return jr.e.cfg.ParentEnv
 }
 
+// nodePlatform is the platform whose Node.js build a JavaScript action runs with: the container's inside one.
+func (jr *jobRun) nodePlatform() nodePlatform {
+	if jr.inCtr() {
+		return nodePlatformOf(jr.ctr.platform)
+	}
+	return hostNodePlatform()
+}
+
 // nodeSearchPath is where a JavaScript action may look for a node binary: the PATH of the step on this machine, but
 // inside a container only the tool cache, which is mounted there.
 func (jr *jobRun) nodeSearchPath(finalPath string) []string {

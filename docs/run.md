@@ -168,7 +168,7 @@ jactionlint run ci --container --platform linux/amd64  # emulate another archite
 
 `ubuntu-latest` and `ubuntu-24.04` map to `ubuntu:24.04`, `ubuntu-22.04` to `ubuntu:22.04`, both pinned by digest. These images are minimal on purpose: they lack the tools of a hosted image (`jq`, `gh`, compilers, language runtimes), so a workflow that installs its tools through `setup-*` actions or `apt-get` works, and anything heavier needs an image you choose with `--image`. The job is root in its container and `sudo` runs the command directly, so `sudo apt-get install` works as on a hosted runner (under the host sandbox it does not, by design). `macos-*` and `windows-*` cells cannot run in a container and are skipped.
 
-JavaScript actions run inside the container with the Node.js of the tool cache, which is a glibc build: images based on musl (Alpine) cannot run them.
+JavaScript actions run inside the container with the Node.js of the tool cache, which is a glibc build: images based on musl (Alpine) cannot run them. The job gets the tool cache and the Node.js build of the container's platform (`--platform`, otherwise the platform of the image), and `runner.os` and `runner.arch` describe the container: `Linux` and `X64` with `--platform linux/amd64`, also on a Mac.
 
 **The engine must see this machine's files.** The directories of the run are bind-mounted, so the engine has to run on this machine (Docker Desktop and Colima share the home directory; a remote daemon does not). `jactionlint run` checks that the container sees a marker file before the first step and says so when it does not.
 
@@ -200,7 +200,7 @@ The service speaks both protocols of the library, because actions bundle differe
 - **Eviction:** entries unread for 7 days expire, and the least recently used entries go when the store is over 10 GB (`--cache-size`).
 - **Where:** `~/.cache/jactionlint/cache/<owner>-<repo>/` (`--cache-dir`). The store is not in the sandbox's allow lists: a step reaches it only through the service, and a cache entry is only ever unpacked by a later sandboxed step.
 - **The home keeps its path.** The fake home is emptied before every job but lives at `~/.cache/jactionlint/home/<repo>/home` each time, because the version of a cache entry includes the absolute paths it holds (`~/.cargo`, `~/.local/share/mise`). Jobs of one repository share that directory one at a time.
-- **`RUNNER_TOOL_CACHE`** is a persistent directory, `~/.cache/jactionlint/toolcache/<os>-<arch>`, where `setup-*` actions and the Node.js downloads go.
+- **`RUNNER_TOOL_CACHE`** is a persistent directory, `~/.cache/jactionlint/toolcache/<os>-<arch>`, where `setup-*` actions and the Node.js downloads go. `<os>-<arch>` is the platform the job runs on, so a job in a `linux/arm64` container uses `toolcache/linux-arm64` and never the binaries of a job on this machine.
 
 ```sh
 jactionlint run ci --cache=read-only        # restore but never save

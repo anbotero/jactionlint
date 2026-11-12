@@ -19,7 +19,12 @@ case "$cmd" in
   version) echo 29.0.0 ;;
   build) echo sha256:abc ;;
   image)
-    if [ "$1" = inspect ]; then echo '["PATH=/usr/local/bin:/usr/bin:/bin","LANG=C.UTF-8"]'; fi ;;
+    if [ "$1" = inspect ]; then
+      case "$*" in
+        *Architecture*) echo "${FAKE_DOCKER_PLATFORM:-linux/amd64}" ;;
+        *) echo '["PATH=/usr/local/bin:/usr/bin:/bin","LANG=C.UTF-8"]' ;;
+      esac
+    fi ;;
   inspect)
     fmt=""; while [ $# -gt 0 ]; do case "$1" in --format) fmt="$2"; shift 2 ;; *) shift ;; esac; done
     case "$fmt" in
